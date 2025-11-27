@@ -4,7 +4,7 @@ import { ref, set, serverTimestamp, onDisconnect } from "firebase/database";
 import { auth, db } from "./firebase.js";
 import AuthForm from "./components/AuthForm.jsx";
 import SearchBar from "./components/SearchBar.jsx";
-import ChatRoom from "./components/Chatroom.jsx";
+import ChatRoom from "./components/ChatRoom.jsx";
 
 export default function App() {
   const [user, setUser] = useState(null);
