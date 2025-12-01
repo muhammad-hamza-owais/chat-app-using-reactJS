@@ -10,35 +10,60 @@ export default function AuthForm() {
   const [msg, setMsg] = useState("");
   const [code, setCode] = useState("");
   const confirmationRef = useRef(null);
-  const recaptchaRefId = "recaptcha-container";
+  const recaptchaId = "recaptcha-container";
 
   useEffect(() => {
-    // cleanup recaptcha if any
+    // cleanup recaptcha when component unmounts
     return () => {
       if (window.recaptchaVerifier) {
         try {
           window.recaptchaVerifier.clear();
-        } catch {}
+        } catch (e) {
+          /* ignore */
+        }
+        window.recaptchaVerifier = null;
       }
     };
   }, []);
 
-  const normalize = (p) => p.replace(/\s+/g, "").replace(/^\+/, "");
+  const normalize = (p) => (p || "").replace(/\s+/g, "").replace(/^\+/, "");
 
   const sendOtp = async () => {
     setMsg("");
-    if (!phone) {
-      setMsg("Phone number daalain");
+    console.log("Debug: auth object:", auth);
+    if (!auth) {
+      setMsg(
+        "Firebase auth initialized nahi hua. Pehle firebase.js check karo.",
+      );
+      console.error("Auth is undefined — check src/firebase.js exports.");
       return;
     }
-    const phoneFormatted = "+" + normalize(phone);
+    if (!phone) {
+      setMsg("Phone number daalo");
+      return;
+    }
+
+    // show visible reCAPTCHA to avoid hidden/invisible issues during debugging
     try {
-      // setup recaptcha (invisible)
+      // clear existing if any
+      if (window.recaptchaVerifier) {
+        try {
+          window.recaptchaVerifier.clear();
+        } catch {}
+        window.recaptchaVerifier = null;
+      }
+
+      // create visible captcha so you can see it and confirm it's loaded
       window.recaptchaVerifier = new RecaptchaVerifier(
-        recaptchaRefId,
-        { size: "invisible" },
+        recaptchaId,
+        { size: "normal" },
         auth,
       );
+      await window.recaptchaVerifier.render(); // ensure widget renders
+
+      const phoneFormatted = "+" + normalize(phone);
+      console.log("Attempting signInWithPhoneNumber for:", phoneFormatted);
+
       const confirmationResult = await signInWithPhoneNumber(
         auth,
         phoneFormatted,
@@ -46,28 +71,39 @@ export default function AuthForm() {
       );
       confirmationRef.current = confirmationResult;
       setStep(1);
-      setMsg("OTP bhej diya gaya. SMS check karo.");
-      // store temp name for after verification
+      setMsg("OTP bhej diya gaya. SMS check karo (ya use test number code).");
+      // store temporary display name
       localStorage.setItem("displayName", name || phoneFormatted);
     } catch (err) {
-      console.error(err);
-      setMsg("OTP send error: " + err.message);
+      console.error("sendOtp error:", err);
+      // helpful error messages
+      if (err && err.code === "auth/invalid-phone-number")
+        setMsg("Phone number invalid.");
+      else if (err && err.code === "auth/too-many-requests")
+        setMsg("Too many attempts — try later.");
+      else
+        setMsg(
+          "OTP send error: " + (err && err.message ? err.message : String(err)),
+        );
     }
   };
 
   const verifyCode = async () => {
     setMsg("");
     if (!code || !confirmationRef.current) {
-      setMsg("Code daalain");
+      setMsg("Code daalo");
       return;
     }
     try {
       const result = await confirmationRef.current.confirm(code);
       const user = result.user;
-      const phoneKey = user.phoneNumber.replace(/\s+/g, "").replace(/^\+/, "");
+      // normalize phone as DB key
+      const phoneKey = (user.phoneNumber || "")
+        .replace(/\s+/g, "")
+        .replace(/^\+/, "");
       const displayName =
         localStorage.getItem("displayName") || name || phoneKey;
-      // write user record
+      // write user record to DB
       await set(ref(db, "users/" + phoneKey), {
         phone: phoneKey,
         name: displayName,
@@ -75,16 +111,19 @@ export default function AuthForm() {
         lastSeen: serverTimestamp(),
       });
       setMsg("Verified & logged in");
-      // auth state change in App will handle rest
+      // auth state change will be handled by onAuthStateChanged in App.jsx
     } catch (err) {
-      console.error(err);
-      setMsg("Invalid code: " + err.message);
+      console.error("verifyCode error:", err);
+      setMsg(
+        "Invalid code: " + (err && err.message ? err.message : String(err)),
+      );
     }
   };
 
   return (
     <div className="auth-card card">
       <h2>Login / Verify (Phone)</h2>
+
       {step === 0 && (
         <>
           <input
@@ -101,7 +140,11 @@ export default function AuthForm() {
             <button onClick={sendOtp}>Send OTP</button>
           </div>
           <p className="muted">{msg}</p>
-          <div id="recaptcha-container"></div>
+          <div id={recaptchaId} style={{ marginTop: 12 }}></div>
+          <p className="muted small">
+            Tip: For local testing add a Test Phone Number in Firebase Console
+            so you don't need actual SMS.
+          </p>
         </>
       )}
 
