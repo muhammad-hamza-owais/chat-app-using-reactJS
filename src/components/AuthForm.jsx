@@ -1,162 +1,134 @@
 // src/components/AuthForm.jsx
-import React, { useEffect, useRef, useState } from "react";
-import { auth, db } from "../firebase.js";
+import React, { useState, useEffect } from "react";
+import { auth } from "../firebase";
 import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
-import { ref, set, serverTimestamp } from "firebase/database";
 
-export default function AuthForm() {
+const AuthForm = () => {
   const [phone, setPhone] = useState("");
-  const [name, setName] = useState("");
-  const [step, setStep] = useState(0);
+  const [otp, setOtp] = useState("");
+  const [confirmationResult, setConfirmationResult] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
-  const [code, setCode] = useState("");
-  const confirmationRef = useRef(null);
-  const recaptchaId = "recaptcha-container";
 
+  // Initialize Recaptcha **ONE TIME ONLY**
   useEffect(() => {
-    return () => {
-      if (window.recaptchaVerifier) {
-        try {
-          window.recaptchaVerifier.clear();
-        } catch (e) {}
-        window.recaptchaVerifier = null;
-      }
-    };
+    if (!window.recaptchaVerifier) {
+      window.recaptchaVerifier = new RecaptchaVerifier(
+        auth,
+        "recaptcha-container",
+        {
+          size: "invisible",
+        },
+      );
+    }
   }, []);
 
-  const normalize = (p) => (p || "").replace(/\s+/g, "").replace(/^\+/, "");
-
-  const sendOtp = async () => {
+  // Send OTP
+  const sendOTP = async () => {
     setMsg("");
-    // sanity checks
-    if (!auth) {
-      setMsg("Firebase auth initialize nahi hua — src/firebase.js check karo.");
-      console.error("auth is undefined:", auth);
-      return;
-    }
-    if (!phone) {
-      setMsg("Phone number daalo");
-      return;
-    }
+    setLoading(true);
 
-    const phoneFormatted = "+" + normalize(phone);
+    if (!phone) {
+      setMsg("Phone number required");
+      setLoading(false);
+      return;
+    }
 
     try {
-      // For local debugging: if you added Test Phone numbers in Firebase Console,
-      // you can optionally disable app verification for testing.
-      // But we try reCAPTCHA first (visible) — more reliable in many setups.
-      if (window.recaptchaVerifier) {
-        try {
-          window.recaptchaVerifier.clear();
-        } catch (e) {}
-        window.recaptchaVerifier = null;
-      }
-
-      window.recaptchaVerifier = new RecaptchaVerifier(
-        recaptchaId,
-        { size: "normal" },
-        auth,
-      );
-      await window.recaptchaVerifier.render();
-
-      console.log("Sending OTP to:", phoneFormatted);
-      const confirmationResult = await signInWithPhoneNumber(
-        auth,
-        phoneFormatted,
-        window.recaptchaVerifier,
-      );
-      confirmationRef.current = confirmationResult;
-      setStep(1);
-      setMsg(
-        "OTP bhej diya gaya. Agar aapne Firebase Console mein Test Number add kiya hai to test code use karen.",
-      );
-      localStorage.setItem("displayName", name || phoneFormatted);
-    } catch (err) {
-      console.error("sendOtp error:", err);
-      // helpful messages
-      if (err?.code === "auth/invalid-phone-number")
-        setMsg("Phone number invalid.");
-      else if (err?.code === "auth/too-many-requests")
-        setMsg("Bahut zyada requests. Thodi der baad try karo.");
-      else if (err?.message && err.message.includes("reCAPTCHA"))
-        setMsg("reCAPTCHA load issue — console dekho.");
-      else setMsg("OTP send error: " + (err?.message || String(err)));
+      const appVerifier = window.recaptchaVerifier;
+      const result = await signInWithPhoneNumber(auth, phone, appVerifier);
+      setConfirmationResult(result);
+      setMsg("OTP sent successfully!");
+    } catch (error) {
+      console.log("OTP send error:", error);
+      setMsg(error.message);
     }
+
+    setLoading(false);
   };
 
-  const verifyCode = async () => {
+  // Verify OTP
+  const verifyOTP = async () => {
     setMsg("");
-    if (!code || !confirmationRef.current) {
-      setMsg("Code daalo");
+    setLoading(true);
+
+    if (!otp || !confirmationResult) {
+      setMsg("Enter OTP");
+      setLoading(false);
       return;
     }
+
     try {
-      const result = await confirmationRef.current.confirm(code);
-      const user = result.user;
-      const phoneKey = (user.phoneNumber || "")
-        .replace(/\s+/g, "")
-        .replace(/^\+/, "");
-      const displayName =
-        localStorage.getItem("displayName") || name || phoneKey;
-      // write user record
-      await set(ref(db, "users/" + phoneKey), {
-        phone: phoneKey,
-        name: displayName,
-        online: true,
-        lastSeen: serverTimestamp(),
-      });
-      setMsg("Verified aur logged in ho gaye ho.");
-      // onAuthStateChanged in App.jsx will pick up the authenticated user
-    } catch (err) {
-      console.error("verifyCode error:", err);
-      setMsg("Invalid code: " + (err?.message || String(err)));
+      await confirmationResult.confirm(otp);
+      setMsg("Login Successful!");
+    } catch (error) {
+      console.log("OTP verify error:", error);
+      setMsg("Invalid OTP");
     }
+
+    setLoading(false);
   };
 
   return (
-    <div className="auth-card card">
-      <h2>Login / Verify (Phone)</h2>
+    <div style={{ width: "300px", margin: "auto", marginTop: "50px" }}>
+      <h2>Phone Login</h2>
 
-      {step === 0 && (
+      {/* PHONE INPUT */}
+      <input
+        type="text"
+        placeholder="+92xxxxxxxxxx"
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
+        style={{ width: "100%", padding: "10px", marginBottom: "10px" }}
+      />
+
+      {/* Send OTP Button */}
+      <button
+        onClick={sendOTP}
+        disabled={loading}
+        style={{ width: "100%", padding: "10px" }}
+      >
+        {loading ? "Sending..." : "Send OTP"}
+      </button>
+
+      {/* OTP INPUT */}
+      {confirmationResult && (
         <>
           <input
-            placeholder="Phone (e.g. +923001234567)"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
+            type="text"
+            placeholder="Enter OTP"
+            value={otp}
+            onChange={(e) => setOtp(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "10px",
+              marginTop: "10px",
+              marginBottom: "10px",
+            }}
           />
-          <input
-            placeholder="Display name (optional)"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-          <div className="row">
-            <button onClick={sendOtp}>Send OTP</button>
-          </div>
-          <p className="muted">{msg}</p>
-          <div id={recaptchaId} style={{ marginTop: 12 }}></div>
-          <p className="muted small">
-            Tip: For local testing add a Test Phone Number in Firebase Console
-            (Auth → Sign-in method → Phone → Test numbers).
-          </p>
+
+          {/* Verify OTP Button */}
+          <button
+            onClick={verifyOTP}
+            disabled={loading}
+            style={{ width: "100%", padding: "10px" }}
+          >
+            {loading ? "Verifying..." : "Verify OTP"}
+          </button>
         </>
       )}
 
-      {step === 1 && (
-        <>
-          <p className="muted">
-            OTP bheja gaya. SMS ka code daal kar verify karein.
-          </p>
-          <input
-            placeholder="Enter OTP"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-          />
-          <div className="row">
-            <button onClick={verifyCode}>Verify Code</button>
-          </div>
-          <p className="muted">{msg}</p>
-        </>
+      {/* RECPTCHA DIV */}
+      <div id="recaptcha-container"></div>
+
+      {/* MESSAGE */}
+      {msg && (
+        <p style={{ marginTop: "10px", color: "blue", fontWeight: "bold" }}>
+          {msg}
+        </p>
       )}
     </div>
   );
-}
+};
+
+export default AuthForm;
