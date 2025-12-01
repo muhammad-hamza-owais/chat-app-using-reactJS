@@ -1,86 +1,67 @@
 import React, { useEffect, useState } from "react";
-import { onAuthStateChanged, signOut } from "firebase/auth";
-import { ref, set, serverTimestamp, onDisconnect } from "firebase/database";
-import { auth, db } from "./firebase.js";
 import AuthForm from "./components/AuthForm.jsx";
-import SearchBar from "./components/SearchBar.jsx";
+import LeftSidebar from "./components/LeftSidebar.jsx";
 import ChatRoom from "./components/ChatRoom.jsx";
+import { ref, set, serverTimestamp, onDisconnect } from "firebase/database";
+import { db } from "./firebase.js";
 
 export default function App() {
-  const [user, setUser] = useState(null);
-  const [currentRoom, setCurrentRoom] = useState(null);
-  const [chatWithEmail, setChatWithEmail] = useState("");
+  const [me, setMe] = useState(null); // {phone, name}
+  const [activeRoom, setActiveRoom] = useState(null); // { roomId, peer }
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      if (u && u.emailVerified) {
-        const emailLower = u.email.toLowerCase();
-        setUser({ uid: u.uid, email: emailLower, rawEmail: u.email });
-
-        const userBaseRef = ref(db, "users/" + u.uid);
-        const onlineRef = ref(db, "users/" + u.uid + "/online");
-        const lastSeenRef = ref(db, "users/" + u.uid + "/lastSeen");
-
-        try {
-          onDisconnect(onlineRef).set(false);
-          onDisconnect(lastSeenRef).set(serverTimestamp());
-          await set(userBaseRef, {
-            email: emailLower,
-            online: true,
-            lastSeen: serverTimestamp(),
-          });
-          await set(onlineRef, true);
-        } catch (err) {
-          console.error("Presence error:", err);
-        }
-      } else {
-        setUser(null);
-        setCurrentRoom(null);
-      }
-    });
-    return () => unsub();
+    // optional: restore login from localStorage
+    const raw = localStorage.getItem("me");
+    if (raw) {
+      try {
+        setMe(JSON.parse(raw));
+      } catch {}
+    }
   }, []);
 
-  const handleLogout = async () => {
-    if (user) {
-      await set(ref(db, "users/" + user.uid + "/online"), false);
+  useEffect(() => {
+    if (!me) return;
+    // write presence to /users/{phone}
+    const p = ref(db, "users/" + me.phone);
+    const onlineRef = ref(db, "users/" + me.phone + "/online");
+    const lastSeenRef = ref(db, "users/" + me.phone + "/lastSeen");
+    onDisconnect(onlineRef).set(false);
+    onDisconnect(lastSeenRef).set(serverTimestamp());
+    set(p, {
+      phone: me.phone,
+      name: me.name,
+      online: true,
+      lastSeen: serverTimestamp(),
+    }).catch(console.error);
+  }, [me]);
+
+  const handleLogin = (user) => {
+    setMe(user);
+    localStorage.setItem("me", JSON.stringify(user));
+  };
+
+  const handleLogout = () => {
+    if (me) {
+      set(ref(db, "users/" + me.phone + "/online"), false).catch(() => {});
     }
-    await signOut(auth);
-    setUser(null);
-    setCurrentRoom(null);
+    localStorage.removeItem("me");
+    setMe(null);
+    setActiveRoom(null);
   };
 
   return (
-    <div className="app-root">
-      {!user && <AuthForm />}
-      {user && (
+    <div className="app-shell">
+      {!me && <AuthForm onLogin={handleLogin} />}
+      {me && (
         <>
-          <div className="app-header">
-            <div>
-              You: <strong>{user.rawEmail}</strong>
-            </div>
-            <div>
-              <button className="danger" onClick={handleLogout}>
-                Logout
-              </button>
-            </div>
-          </div>
-
-          <SearchBar
-            user={user}
-            onOpenRoom={(roomId, peerEmail) => {
-              setCurrentRoom(roomId);
-              setChatWithEmail(peerEmail);
+          <LeftSidebar
+            me={me}
+            onSelectRoom={(room, peer) => {
+              setActiveRoom({ roomId: room, peer });
             }}
+            onLogout={handleLogout}
           />
-
-          {currentRoom && (
-            <ChatRoom
-              roomId={currentRoom}
-              myUser={user}
-              peerEmail={chatWithEmail}
-            />
-          )}
+          <ChatRoom me={me} activeRoom={activeRoom} />
         </>
       )}
     </div>
