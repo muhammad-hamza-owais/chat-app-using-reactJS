@@ -1,64 +1,61 @@
 import React, { useEffect, useState } from "react";
 import { db } from "../firebase.js";
-import {
-  ref,
-  onValue,
-  query,
-  orderByChild,
-  equalTo,
-  get,
-} from "firebase/database";
+import { ref, onValue, get, set, update } from "firebase/database";
 
 export default function LeftSidebar({ me, onSelectRoom, onLogout }) {
-  const [conversations, setConversations] = useState([]); // {roomId, peer, lastText, lastTs}
+  const [conversations, setConversations] = useState([]);
   const [search, setSearch] = useState("");
+  const [msg, setMsg] = useState("");
 
   useEffect(() => {
     if (!me) return;
     const urRef = ref(db, "userRooms/" + me.phone);
     const unsub = onValue(urRef, (snap) => {
-      const data = snap.val() || {};
-      const items = Object.keys(data).map((rid) => ({
-        roomId: rid,
-        ...data[rid],
-      }));
-      // sort by lastTs desc
-      items.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
-      setConversations(items);
+      const val = snap.val() || {};
+      const list = Object.keys(val).map((k) => ({ roomId: k, ...val[k] }));
+      list.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
+      setConversations(list);
     });
     return () => unsub();
   }, [me]);
 
+  const normalize = (p) => p.replace(/\s+/g, "").replace(/^\+/, "");
   const startChat = async (target) => {
-    if (!target) return;
-    const phone = target.replace(/\s+/g, "").replace(/^\+/, "");
-    const u1 = me.phone;
-    const u2 = phone;
-    if (u1 === u2) return;
-    const roomId = [u1, u2].sort().join("_");
-    // ensure both userRooms entries exist (update lastTs)
+    setMsg("");
+    const phoneKey = normalize(target);
+    if (!phoneKey) {
+      setMsg("Phone likho pehle");
+      return;
+    }
+    if (phoneKey === me.phone) {
+      setMsg("Apne aap se chat nahi kar sakte");
+      return;
+    }
+    const roomId = [me.phone, phoneKey].sort().join("_");
     const ts = Date.now();
-    await Promise.all([
-      ref(db, "userRooms/" + me.phone + "/" + roomId).update?.({
-        lastTs: ts,
-      }) ||
-        set(ref(db, "userRooms/" + me.phone + "/" + roomId), { lastTs: ts }),
-      set(ref(db, "userRooms/" + phone + "/" + roomId), { lastTs: ts }).catch(
-        () => {},
-      ),
-    ]);
-    // fetch peer name if exists
-    const peerSnap = await get(ref(db, "users/" + phone));
-    const peer = peerSnap.exists() ? peerSnap.val().name : phone;
-    onSelectRoom(roomId, peer);
+    // ensure userRooms entries exist
+    await set(ref(db, "userRooms/" + me.phone + "/" + roomId), {
+      peer: phoneKey,
+      lastText: "",
+      lastTs: ts,
+    }).catch(() => {});
+    await set(ref(db, "userRooms/" + phoneKey + "/" + roomId), {
+      peer: me.phone,
+      lastText: "",
+      lastTs: ts,
+    }).catch(() => {});
+    // try to fetch peer name
+    const snap = await get(ref(db, "users/" + phoneKey));
+    const peerName = snap.exists() ? snap.val().name : phoneKey;
+    onSelectRoom(roomId, peerName);
   };
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-top">
+      <div className="sidebar-top card">
         <div>
           <strong>{me.name}</strong>
-          <div className="muted">You: {me.phone}</div>
+          <div className="muted small">You: {me.phone}</div>
         </div>
         <div>
           <button className="danger" onClick={onLogout}>
@@ -76,9 +73,10 @@ export default function LeftSidebar({ me, onSelectRoom, onLogout }) {
         <div className="row">
           <button onClick={() => startChat(search)}>Start / Search</button>
         </div>
+        <p className="muted small">{msg}</p>
       </div>
 
-      <div className="conversations card">
+      <div className="card conversations">
         <h4>Chats</h4>
         {conversations.length === 0 && (
           <p className="muted small">No chats yet</p>
@@ -87,14 +85,15 @@ export default function LeftSidebar({ me, onSelectRoom, onLogout }) {
           <div
             key={c.roomId}
             className="conv-item"
-            onClick={() => onSelectRoom(c.roomId, c.peer || "Unknown")}
+            onClick={() =>
+              onSelectRoom(
+                c.roomId,
+                c.peer || c.roomId.split("_").find((x) => x !== me.phone),
+              )
+            }
           >
-            <div className="conv-title">
-              {c.peer || c.roomId.split("_").find((x) => x !== me.phone)}
-            </div>
-            <div className="muted small">
-              {c.lastText ? c.lastText.slice(0, 40) : ""}
-            </div>
+            <div className="conv-title">{c.peer}</div>
+            <div className="muted small">{c.lastText || ""}</div>
           </div>
         ))}
       </div>
