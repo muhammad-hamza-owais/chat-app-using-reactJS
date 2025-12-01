@@ -1,3 +1,4 @@
+// src/components/AuthForm.jsx
 import React, { useEffect, useRef, useState } from "react";
 import { auth, db } from "../firebase.js";
 import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
@@ -6,21 +7,18 @@ import { ref, set, serverTimestamp } from "firebase/database";
 export default function AuthForm() {
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
-  const [step, setStep] = useState(0); // 0 = enter phone, 1 = enter code
+  const [step, setStep] = useState(0);
   const [msg, setMsg] = useState("");
   const [code, setCode] = useState("");
   const confirmationRef = useRef(null);
   const recaptchaId = "recaptcha-container";
 
   useEffect(() => {
-    // cleanup recaptcha when component unmounts
     return () => {
       if (window.recaptchaVerifier) {
         try {
           window.recaptchaVerifier.clear();
-        } catch (e) {
-          /* ignore */
-        }
+        } catch (e) {}
         window.recaptchaVerifier = null;
       }
     };
@@ -30,12 +28,10 @@ export default function AuthForm() {
 
   const sendOtp = async () => {
     setMsg("");
-    console.log("Debug: auth object:", auth);
+    // sanity checks
     if (!auth) {
-      setMsg(
-        "Firebase auth initialized nahi hua. Pehle firebase.js check karo.",
-      );
-      console.error("Auth is undefined — check src/firebase.js exports.");
+      setMsg("Firebase auth initialize nahi hua — src/firebase.js check karo.");
+      console.error("auth is undefined:", auth);
       return;
     }
     if (!phone) {
@@ -43,27 +39,27 @@ export default function AuthForm() {
       return;
     }
 
-    // show visible reCAPTCHA to avoid hidden/invisible issues during debugging
+    const phoneFormatted = "+" + normalize(phone);
+
     try {
-      // clear existing if any
+      // For local debugging: if you added Test Phone numbers in Firebase Console,
+      // you can optionally disable app verification for testing.
+      // But we try reCAPTCHA first (visible) — more reliable in many setups.
       if (window.recaptchaVerifier) {
         try {
           window.recaptchaVerifier.clear();
-        } catch {}
+        } catch (e) {}
         window.recaptchaVerifier = null;
       }
 
-      // create visible captcha so you can see it and confirm it's loaded
       window.recaptchaVerifier = new RecaptchaVerifier(
         recaptchaId,
         { size: "normal" },
         auth,
       );
-      await window.recaptchaVerifier.render(); // ensure widget renders
+      await window.recaptchaVerifier.render();
 
-      const phoneFormatted = "+" + normalize(phone);
-      console.log("Attempting signInWithPhoneNumber for:", phoneFormatted);
-
+      console.log("Sending OTP to:", phoneFormatted);
       const confirmationResult = await signInWithPhoneNumber(
         auth,
         phoneFormatted,
@@ -71,20 +67,20 @@ export default function AuthForm() {
       );
       confirmationRef.current = confirmationResult;
       setStep(1);
-      setMsg("OTP bhej diya gaya. SMS check karo (ya use test number code).");
-      // store temporary display name
+      setMsg(
+        "OTP bhej diya gaya. Agar aapne Firebase Console mein Test Number add kiya hai to test code use karen.",
+      );
       localStorage.setItem("displayName", name || phoneFormatted);
     } catch (err) {
       console.error("sendOtp error:", err);
-      // helpful error messages
-      if (err && err.code === "auth/invalid-phone-number")
+      // helpful messages
+      if (err?.code === "auth/invalid-phone-number")
         setMsg("Phone number invalid.");
-      else if (err && err.code === "auth/too-many-requests")
-        setMsg("Too many attempts — try later.");
-      else
-        setMsg(
-          "OTP send error: " + (err && err.message ? err.message : String(err)),
-        );
+      else if (err?.code === "auth/too-many-requests")
+        setMsg("Bahut zyada requests. Thodi der baad try karo.");
+      else if (err?.message && err.message.includes("reCAPTCHA"))
+        setMsg("reCAPTCHA load issue — console dekho.");
+      else setMsg("OTP send error: " + (err?.message || String(err)));
     }
   };
 
@@ -97,26 +93,23 @@ export default function AuthForm() {
     try {
       const result = await confirmationRef.current.confirm(code);
       const user = result.user;
-      // normalize phone as DB key
       const phoneKey = (user.phoneNumber || "")
         .replace(/\s+/g, "")
         .replace(/^\+/, "");
       const displayName =
         localStorage.getItem("displayName") || name || phoneKey;
-      // write user record to DB
+      // write user record
       await set(ref(db, "users/" + phoneKey), {
         phone: phoneKey,
         name: displayName,
         online: true,
         lastSeen: serverTimestamp(),
       });
-      setMsg("Verified & logged in");
-      // auth state change will be handled by onAuthStateChanged in App.jsx
+      setMsg("Verified aur logged in ho gaye ho.");
+      // onAuthStateChanged in App.jsx will pick up the authenticated user
     } catch (err) {
       console.error("verifyCode error:", err);
-      setMsg(
-        "Invalid code: " + (err && err.message ? err.message : String(err)),
-      );
+      setMsg("Invalid code: " + (err?.message || String(err)));
     }
   };
 
@@ -143,7 +136,7 @@ export default function AuthForm() {
           <div id={recaptchaId} style={{ marginTop: 12 }}></div>
           <p className="muted small">
             Tip: For local testing add a Test Phone Number in Firebase Console
-            so you don't need actual SMS.
+            (Auth → Sign-in method → Phone → Test numbers).
           </p>
         </>
       )}
@@ -151,7 +144,7 @@ export default function AuthForm() {
       {step === 1 && (
         <>
           <p className="muted">
-            OTP bhej diya gaya. SMS ka code daal kar verify karein.
+            OTP bheja gaya. SMS ka code daal kar verify karein.
           </p>
           <input
             placeholder="Enter OTP"

@@ -1,3 +1,4 @@
+// src/components/ChatRoom.jsx
 import React, { useEffect, useRef, useState } from "react";
 import { db, storage } from "../firebase.js";
 import {
@@ -6,7 +7,6 @@ import {
   push,
   serverTimestamp,
   update,
-  get,
 } from "firebase/database";
 import { ref as sRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
@@ -25,7 +25,7 @@ export default function ChatRoom({ me, activeRoom }) {
     const cb = (snap) => {
       const data = snap.val();
       setMessages((prev) => [...prev, data]);
-      // update userRooms lastText & lastTs
+      // update lastText for userRooms
       const payloadLast = {
         lastText: data.text
           ? data.text.slice(0, 100)
@@ -48,8 +48,8 @@ export default function ChatRoom({ me, activeRoom }) {
       ).catch(() => {});
     };
     onChildAdded(messagesRef, cb);
-    // no clean detach function from this simple import; okay for demo
-  }, [activeRoom]);
+    // no explicit detach here — OK for demo
+  }, [activeRoom, me.phone]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -70,32 +70,47 @@ export default function ChatRoom({ me, activeRoom }) {
   };
 
   const startRecording = async () => {
+    // if storage not available, disallow recording
+    if (!storage) {
+      alert("Voice messages ke liye Firebase Storage enable karo pehle.");
+      return;
+    }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       alert("Mic not supported");
       return;
     }
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorderRef.current = new MediaRecorder(stream);
-    chunksRef.current = [];
-    mediaRecorderRef.current.ondataavailable = (e) =>
-      chunksRef.current.push(e.data);
-    mediaRecorderRef.current.onstop = async () => {
-      const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-      const filename = `${activeRoom.roomId}/${Date.now()}.webm`;
-      const sref = sRef(storage, filename);
-      await uploadBytes(sref, blob);
-      const url = await getDownloadURL(sref);
-      const mRef = ref(db, "rooms/" + activeRoom.roomId + "/messages");
-      const payload = {
-        userPhone: me.phone,
-        userName: me.name,
-        audioURL: url,
-        ts: serverTimestamp(),
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      chunksRef.current = [];
+      mediaRecorderRef.current.ondataavailable = (e) =>
+        chunksRef.current.push(e.data);
+      mediaRecorderRef.current.onstop = async () => {
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        const filename = `${activeRoom.roomId}/${Date.now()}.webm`;
+        const sref = sRef(storage, filename);
+        try {
+          await uploadBytes(sref, blob);
+          const url = await getDownloadURL(sref);
+          const mRef = ref(db, "rooms/" + activeRoom.roomId + "/messages");
+          const payload = {
+            userPhone: me.phone,
+            userName: me.name,
+            audioURL: url,
+            ts: serverTimestamp(),
+          };
+          await push(mRef, payload);
+        } catch (err) {
+          console.error("upload error:", err);
+          alert("Voice upload failed: " + (err?.message || err));
+        }
       };
-      await push(mRef, payload);
-    };
-    mediaRecorderRef.current.start();
-    setRecording(true);
+      mediaRecorderRef.current.start();
+      setRecording(true);
+    } catch (err) {
+      console.error("recording error:", err);
+      alert("Recording start error: " + (err?.message || err));
+    }
   };
 
   const stopRecording = () => {
@@ -105,20 +120,18 @@ export default function ChatRoom({ me, activeRoom }) {
     }
   };
 
-  if (!activeRoom) {
+  if (!activeRoom)
     return (
       <div className="chat-panel card">
-        <p className="muted">Select or start a chat</p>
+        <p className="muted">Select/Start a chat</p>
       </div>
     );
-  }
 
   return (
     <div className="chat-panel">
       <div className="chat-header card">
         <h3>Chat with: {activeRoom.peer}</h3>
       </div>
-
       <div className="messages card">
         {messages.map((m, i) => (
           <div

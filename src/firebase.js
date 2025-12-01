@@ -1,3 +1,4 @@
+// src/firebase.js
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getDatabase } from "firebase/database";
@@ -14,6 +15,17 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+
+// exports — make sure these names match everywhere
 export const auth = getAuth(app);
 export const db = getDatabase(app);
-export const storage = getStorage(app);
+
+// storage may fail if not enabled; export but handle failures where used
+export let storage;
+try {
+  storage = getStorage(app);
+} catch (e) {
+  // if storage not enabled this will still allow app to run
+  console.warn("Firebase storage init failed:", e?.message || e);
+  storage = null;
+}
